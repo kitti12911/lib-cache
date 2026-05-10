@@ -1,0 +1,19 @@
+# Age password file
+*.key
+
+# Helm decrypted file
+*.dec
+
+# certificate
+*.crt
+
+# test coverage
+coverage.out
+
+# config
+config.yml
+config.yaml
+
+# air
+tmp/
+
