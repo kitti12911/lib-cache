@@ -1,1 +1,110 @@
 # lib-cache
+
+Shared Redis-compatible cache helpers for homelab services.
+
+The default codec is JSON, so services can store and retrieve normal structs
+without writing repetitive marshaling code. Dragonfly works because it speaks
+the Redis protocol.
+
+## project structure
+
+```bash
+lib-cache/
+├── cache.go      # typed cache wrapper, key namespacing, TTL, and invalidation
+├── codec.go      # codec interface and JSON codec implementation
+├── config.go     # Redis-compatible cache configuration
+├── Makefile
+├── go.mod
+└── README.md
+```
+
+## install
+
+```bash
+go get github.com/kitti12911/lib-cache
+```
+
+## usage
+
+```go
+type UserView struct {
+    ID   string `json:"id"`
+    Name string `json:"name"`
+}
+
+cacheClient, err := cache.New(
+    ctx,
+    cache.Config{
+        Addr:       "dragonfly.database.svc.cluster.local:6379",
+        Password:   "example",
+        KeyPrefix:  "oas-sandbox",
+        DefaultTTL: 5 * time.Minute,
+    },
+    cache.WithSingleflight(true),
+)
+if err != nil {
+    return err
+}
+defer cacheClient.Close()
+
+users := cache.Use[UserView](cacheClient)
+
+view, err := users.GetOrLoad(ctx, "users:"+id, func(ctx context.Context) (UserView, error) {
+    return loadUserView(ctx, id)
+})
+```
+
+Use `Set` when a caller already has the value:
+
+```go
+err = users.Set(ctx, "users:"+id, view, cache.WithTTL(time.Minute))
+```
+
+Use `Delete` for one or more keys:
+
+```go
+err = users.Delete(ctx, "users:"+id)
+```
+
+Use `Clear` for operational invalidation of every key in the configured
+namespace:
+
+```go
+err = cacheClient.Clear(ctx)
+```
+
+When `KeyPrefix` is set, `Clear` only deletes keys under that prefix. Without a
+prefix, it falls back to `FLUSHDB`, so production services should set a prefix.
+
+## behavior
+
+- `DefaultTTL` is the global default invalidation time.
+- `cache.WithTTL(...)` overrides TTL for a single write or load.
+- `cache.WithSingleflight(true)` collapses concurrent cache misses for the same
+  key into one loader call.
+- `Delete` invalidates specific keys.
+- `Clear` invalidates the full configured cache namespace.
+
+## requirements
+
+- go 1.26 or higher
+
+Optional:
+
+- [prettier](https://prettier.io/) for Markdown, YAML, JSON, and JSONC formatting
+- [golangci-lint](https://golangci-lint.run/) for `make lint`
+- [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2) for `make lint`
+
+## available commands
+
+| Command       | Description                                     |
+| ------------- | ----------------------------------------------- |
+| `make tidy`   | Run `go mod tidy`                               |
+| `make lint`   | Run Go and Markdown linting                     |
+| `make vet`    | Run `go vet ./...`                              |
+| `make fmt`    | Format Go code with `go fmt`                    |
+| `make pretty` | Format Markdown, YAML, JSON, and JSONC          |
+| `make format` | Run Go and document/config formatting           |
+| `make test`   | Run tests with the race detector                |
+| `make cov`    | Generate and open an HTML coverage report       |
+| `make fix`    | Apply standard Go source rewrites with `go fix` |
