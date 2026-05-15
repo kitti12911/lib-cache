@@ -217,20 +217,15 @@ func (c *Typed[T]) GetOrLoad(
 		return c.loadAndSet(ctx, key, load, opts...)
 	}
 
-	value, err, _ := c.cache.group.Do(c.cache.key(key), func() (any, error) {
+	var zero T
+	groupKey := fmt.Sprintf("%T:%s", zero, c.cache.key(key))
+	value, err, _ := c.cache.group.Do(groupKey, func() (any, error) {
 		return c.loadAndSet(ctx, key, load, opts...)
 	})
 	if err != nil {
-		var zero T
 		return zero, fmt.Errorf("cache: singleflight %q: %w", key, err)
 	}
-
-	typed, ok := value.(T)
-	if !ok {
-		var zero T
-		return zero, fmt.Errorf("cache: singleflight value for %q has unexpected type %T", key, value)
-	}
-	return typed, nil
+	return value.(T), nil
 }
 
 func (c *Typed[T]) Delete(ctx context.Context, keys ...string) error {

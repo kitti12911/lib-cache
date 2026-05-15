@@ -278,7 +278,7 @@ func TestTypedCacheGetOrLoadSingleflightError(t *testing.T) {
 	require.Equal(t, user{}, value)
 }
 
-func TestTypedCacheGetOrLoadSingleflightUnexpectedType(t *testing.T) {
+func TestTypedCacheGetOrLoadSingleflightIsolatesPerType(t *testing.T) {
 	t.Parallel()
 
 	cache := newTestCache(t, Config{KeyPrefix: "test"}, true)
@@ -287,32 +287,60 @@ func TestTypedCacheGetOrLoadSingleflightUnexpectedType(t *testing.T) {
 
 	loadStarted := make(chan struct{})
 	releaseLoad := make(chan struct{})
-	stringDone := make(chan error, 1)
+	type stringResult struct {
+		value string
+		err   error
+	}
+	stringDone := make(chan stringResult, 1)
 
 	go func() {
-		_, err := strings.GetOrLoad(context.Background(), "value", func(context.Context) (string, error) {
+		v, err := strings.GetOrLoad(context.Background(), "value", func(context.Context) (string, error) {
 			close(loadStarted)
 			<-releaseLoad
-			return "wrong type", nil
+			return "hello", nil
 		})
-		stringDone <- err
+		stringDone <- stringResult{v, err}
 	}()
 
 	<-loadStarted
 
-	intDone := make(chan error, 1)
+	type intResult struct {
+		value int
+		err   error
+	}
+	intDone := make(chan intResult, 1)
 	go func() {
-		_, err := ints.GetOrLoad(context.Background(), "value", func(context.Context) (int, error) {
+		v, err := ints.GetOrLoad(context.Background(), "value", func(context.Context) (int, error) {
 			return 1, nil
 		})
-		intDone <- err
+		intDone <- intResult{v, err}
 	}()
 
 	time.Sleep(10 * time.Millisecond)
 	close(releaseLoad)
 
-	require.NoError(t, <-stringDone)
-	require.ErrorContains(t, <-intDone, `cache: singleflight value for "value" has unexpected type string`)
+	gotString := <-stringDone
+	gotInt := <-intDone
+	require.NoError(t, gotString.err)
+	require.Equal(t, "hello", gotString.value)
+	require.NoError(t, gotInt.err)
+	require.Equal(t, 1, gotInt.value)
+}
+
+func TestTypedCacheGetOrLoadPropagatesContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	cache := newTestCache(t, Config{KeyPrefix: "test"}, true)
+	users := Use[user](cache)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := users.GetOrLoad(ctx, "user:u1", func(ctx context.Context) (user, error) {
+		return user{}, ctx.Err()
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestTypedCacheGetOrLoadReturnsCacheGetError(t *testing.T) {
