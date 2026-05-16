@@ -1,3 +1,6 @@
 CHANGELOG.md
 coverage.out
-
+.codex/
+.cursor/
+gen/
+tmp/
