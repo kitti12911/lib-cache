@@ -62,7 +62,18 @@ func New(ctx context.Context, cfg Config, opts ...Option) (*Cache, error) {
 		return nil, errors.New("cache: addr is required")
 	}
 
-	client := redis.NewClient(&redis.Options{
+	client := newRedisClient(cfg)
+	cache := Wrap(client, cfg, opts...)
+	if err := cache.Ping(ctx); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+
+	return cache, nil
+}
+
+func newRedisClient(cfg Config) *redis.Client {
+	return redis.NewClient(&redis.Options{
 		Addr:         cfg.Addr,
 		Username:     cfg.Username,
 		Password:     cfg.Password,
@@ -72,14 +83,45 @@ func New(ctx context.Context, cfg Config, opts ...Option) (*Cache, error) {
 		WriteTimeout: cfg.WriteTimeout,
 		PoolSize:     cfg.PoolSize,
 	})
+}
 
-	cache := Wrap(client, cfg, opts...)
-	if err := cache.Ping(ctx); err != nil {
+type Manager struct {
+	client redis.UniversalClient
+	cfg    Config
+	opts   []Option
+}
+
+func NewManager(ctx context.Context, cfg Config, opts ...Option) (*Manager, error) {
+	if strings.TrimSpace(cfg.Addr) == "" {
+		return nil, errors.New("cache: addr is required")
+	}
+
+	client := newRedisClient(cfg)
+	if err := Wrap(client, cfg, opts...).Ping(ctx); err != nil {
 		_ = client.Close()
 		return nil, err
 	}
 
-	return cache, nil
+	return &Manager{client: client, cfg: cfg, opts: opts}, nil
+}
+
+func (m *Manager) Namespace(name string) *Cache {
+	cfg := m.cfg
+	name = strings.TrimSpace(name)
+	switch {
+	case cfg.KeyPrefix == "":
+		cfg.KeyPrefix = name
+	case name != "":
+		cfg.KeyPrefix = cfg.KeyPrefix + ":" + name
+	}
+	return Wrap(m.client, cfg, m.opts...)
+}
+
+func (m *Manager) Close() error {
+	if err := m.client.Close(); err != nil {
+		return fmt.Errorf("cache: close manager: %w", err)
+	}
+	return nil
 }
 
 func Wrap(client redis.UniversalClient, cfg Config, opts ...Option) *Cache {

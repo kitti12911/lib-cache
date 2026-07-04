@@ -550,3 +550,25 @@ func newTestClient(t *testing.T) *redis.Client {
 	server := miniredis.RunT(t)
 	return redis.NewClient(&redis.Options{Addr: server.Addr()})
 }
+
+func TestManagerNamespaceIsolatesKeys(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	manager, err := NewManager(context.Background(), Config{Addr: server.Addr(), KeyPrefix: "svc"}, WithSingleflight(true))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, manager.Close())
+	})
+
+	skill := Use[string](manager.Namespace("skill"))
+	part := Use[string](manager.Namespace("part"))
+
+	require.NoError(t, skill.Set(context.Background(), "k", "s"))
+	require.NoError(t, part.Set(context.Background(), "k", "p"))
+	require.True(t, server.Exists("svc:skill:k"))
+	require.True(t, server.Exists("svc:part:k"))
+
+	require.NoError(t, manager.Namespace("skill").Clear(context.Background()))
+	require.False(t, server.Exists("svc:skill:k"))
+	require.True(t, server.Exists("svc:part:k"))
+}
