@@ -572,3 +572,60 @@ func TestManagerNamespaceIsolatesKeys(t *testing.T) {
 	require.False(t, server.Exists("svc:skill:k"))
 	require.True(t, server.Exists("svc:part:k"))
 }
+
+func TestNewManagerRequiresAddr(t *testing.T) {
+	_, err := NewManager(context.Background(), Config{Addr: "  "})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "addr is required")
+}
+
+func TestNewManagerPingFailure(t *testing.T) {
+	server := miniredis.RunT(t)
+	addr := server.Addr()
+	server.Close() // connection refused -> ping fails, client is closed
+
+	_, err := NewManager(context.Background(), Config{Addr: addr})
+	require.Error(t, err)
+}
+
+func TestManagerNamespaceWithoutBasePrefix(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	manager, err := NewManager(context.Background(), Config{Addr: server.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+
+	// no base prefix: the namespace becomes the whole prefix
+	skill := Use[string](manager.Namespace("skill"))
+	require.NoError(t, skill.Set(context.Background(), "k", "v"))
+	require.True(t, server.Exists("skill:k"))
+
+	// empty namespace on an empty base: keys stay unprefixed
+	bare := Use[string](manager.Namespace("  "))
+	require.NoError(t, bare.Set(context.Background(), "k2", "v"))
+	require.True(t, server.Exists("k2"))
+}
+
+func TestManagerNamespaceEmptyNameKeepsBasePrefix(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	manager, err := NewManager(context.Background(), Config{Addr: server.Addr(), KeyPrefix: "svc"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+
+	c := Use[string](manager.Namespace(""))
+	require.NoError(t, c.Set(context.Background(), "k", "v"))
+	require.True(t, server.Exists("svc:k"))
+}
+
+func TestManagerCloseTwiceReturnsError(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	manager, err := NewManager(context.Background(), Config{Addr: server.Addr()})
+	require.NoError(t, err)
+
+	require.NoError(t, manager.Close())
+	err = manager.Close()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "close manager")
+}
